@@ -3,6 +3,7 @@ import { provideHttpClient } from '@angular/common/http';
 import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
 import { ActivatedRoute } from '@angular/router';
 
+import { AuthService } from '../auth/auth.service';
 import { BoardDetailComponent } from './board-detail.component';
 
 describe('BoardDetailComponent', () => {
@@ -28,6 +29,8 @@ describe('BoardDetailComponent', () => {
 
     http.expectOne('/api/boards/7').flush({ id: 7, name: 'Sprint 1' });
 
+    http.expectOne('/api/boards/7/members').flush([]);
+
     const listsReq = http.expectOne('/api/boards/7/lists');
     listsReq.flush([{ id: 1, boardId: 7, name: 'To do', position: 0 }]);
 
@@ -45,6 +48,8 @@ describe('BoardDetailComponent', () => {
     fixture.detectChanges();
 
     http.expectOne('/api/boards/7').flush({ id: 7, name: 'Sprint 1' });
+
+    http.expectOne('/api/boards/7/members').flush([]);
     http.expectOne('/api/boards/7/lists').flush([
       { id: 1, boardId: 7, name: 'To do', position: 0 },
       { id: 2, boardId: 7, name: 'Doing', position: 1 }
@@ -76,6 +81,8 @@ describe('BoardDetailComponent', () => {
     fixture.detectChanges();
 
     http.expectOne('/api/boards/7').flush({ id: 7, name: 'Sprint 1' });
+
+    http.expectOne('/api/boards/7/members').flush([]);
     http.expectOne('/api/boards/7/lists').flush([
       { id: 1, boardId: 7, name: 'To do', position: 0 }
     ]);
@@ -106,6 +113,8 @@ describe('BoardDetailComponent', () => {
     fixture.detectChanges();
 
     http.expectOne('/api/boards/7').flush({ id: 7, name: 'Sprint 1' });
+
+    http.expectOne('/api/boards/7/members').flush([]);
     http.expectOne('/api/boards/7/lists').flush([
       { id: 1, boardId: 7, name: 'To do', position: 0 }
     ]);
@@ -126,6 +135,8 @@ describe('BoardDetailComponent', () => {
     fixture.detectChanges();
 
     http.expectOne('/api/boards/7').flush({ id: 7, name: 'Sprint 1' });
+
+    http.expectOne('/api/boards/7/members').flush([]);
     http.expectOne('/api/boards/7/lists').flush([
       { id: 1, boardId: 7, name: 'To do', position: 0 }
     ]);
@@ -145,5 +156,90 @@ describe('BoardDetailComponent', () => {
     expect(component.cardsFor(1).length).toBe(1);
     expect(draft.title).toBe('');
     expect(draft.description).toBe('');
+  });
+  describe('members panel', () => {
+    /** Signs in as `username` and loads board 7 (owned by alice), shared with bob. */
+    function openBoardAs(username: string, roles: string[] = ['user']) {
+      const auth = TestBed.inject(AuthService);
+      auth.username.set(username);
+      auth.roles.set(roles);
+
+      const fixture = TestBed.createComponent(BoardDetailComponent);
+      fixture.detectChanges();
+      http.expectOne('/api/boards/7').flush({ id: 7, name: 'Sprint 1', owner: 'alice' });
+      http.expectOne('/api/boards/7/members').flush([{ id: 1, boardId: 7, username: 'bob' }]);
+      http.expectOne('/api/boards/7/lists').flush([]);
+      fixture.detectChanges();
+      return fixture;
+    }
+
+    const page = (fixture: { nativeElement: HTMLElement }) => fixture.nativeElement;
+
+    it('lists the members to a member, without the owner controls', () => {
+      const fixture = openBoardAs('bob');
+
+      expect(fixture.componentInstance.members().map(m => m.username)).toEqual(['bob']);
+      expect(fixture.componentInstance.canManage()).toBeFalse();
+      expect(page(fixture).querySelector('.members')?.textContent).toContain('bob');
+      expect(page(fixture).querySelector('.add-member')).toBeNull();
+      expect(page(fixture).querySelector('.chip-remove')).toBeNull();
+    });
+
+    it('shows the add/remove controls to the owner', () => {
+      const fixture = openBoardAs('alice');
+
+      expect(fixture.componentInstance.canManage()).toBeTrue();
+      expect(page(fixture).querySelector('.add-member')).not.toBeNull();
+      expect(page(fixture).querySelector('.chip-remove')).not.toBeNull();
+    });
+
+    it('shows the add/remove controls to an admin', () => {
+      const fixture = openBoardAs('carol', ['user', 'admin']);
+      expect(fixture.componentInstance.canManage()).toBeTrue();
+    });
+
+    it('POSTs the username and adds the new member to the list', () => {
+      const fixture = openBoardAs('alice');
+      const component = fixture.componentInstance;
+
+      component.newMemberName = ' dave ';
+      component.addMember();
+
+      const post = http.expectOne('/api/boards/7/members');
+      expect(post.request.method).toBe('POST');
+      expect(post.request.body).toEqual({ username: 'dave' });
+      post.flush({ id: 2, boardId: 7, username: 'dave' });
+
+      expect(component.members().map(m => m.username)).toEqual(['bob', 'dave']);
+      expect(component.newMemberName).toBe('');
+    });
+
+    it("shows the backend's reason when adding a member is rejected", () => {
+      const fixture = openBoardAs('alice');
+      const component = fixture.componentInstance;
+
+      component.newMemberName = 'bob';
+      component.addMember();
+      http.expectOne('/api/boards/7/members').flush(
+        { error: 'bob is already a member of this board' },
+        { status: 400, statusText: 'Bad Request' });
+
+      expect(component.error()).toBe('Could not add "bob": bob is already a member of this board');
+      expect(component.members().length).toBe(1);
+    });
+
+    it('DELETEs a member and drops them from the list', () => {
+      const fixture = openBoardAs('alice');
+      const component = fixture.componentInstance;
+      spyOn(window, 'confirm').and.returnValue(true);
+
+      component.removeMember(component.members()[0]);
+
+      const del = http.expectOne('/api/boards/7/members/bob');
+      expect(del.request.method).toBe('DELETE');
+      del.flush(null);
+
+      expect(component.members().length).toBe(0);
+    });
   });
 });

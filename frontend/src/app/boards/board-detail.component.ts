@@ -1,4 +1,4 @@
-import { Component, ElementRef, OnInit, inject, signal, viewChildren } from '@angular/core';
+import { Component, ElementRef, OnInit, computed, inject, signal, viewChildren } from '@angular/core';
 import { ActivatedRoute, RouterLink } from '@angular/router';
 import { FormsModule } from '@angular/forms';
 import {
@@ -11,7 +11,9 @@ import {
 } from '@angular/cdk/drag-drop';
 import { forkJoin } from 'rxjs';
 
-import { Board, BoardList, Card } from '../models/board';
+import { AuthService } from '../auth/auth.service';
+import { Board, BoardList, BoardMember, Card } from '../models/board';
+import { apiReason } from '../services/api-error';
 import { BoardService } from '../services/board.service';
 
 /**
@@ -30,6 +32,10 @@ import { BoardService } from '../services/board.service';
  * column: clicking it opens a one-field composer (title only) that stays open so
  * several cards can be typed in a row. The description is filled in afterwards
  * through the inline card editor.
+ *
+ * A members panel lists who the board is shared with. Everyone who can open the
+ * board sees it; only the owner (or an admin) gets the controls to add and
+ * remove members - the backend enforces the same rule with a 403.
  */
 @Component({
   selector: 'app-board-detail',
@@ -40,8 +46,18 @@ import { BoardService } from '../services/board.service';
 export class BoardDetailComponent implements OnInit {
   private readonly route = inject(ActivatedRoute);
   private readonly boardService = inject(BoardService);
+  private readonly auth = inject(AuthService);
 
   readonly board = signal<Board | null>(null);
+  /** Who the board is shared with; the owner is `board().owner`, never in this list. */
+  readonly members = signal<BoardMember[]>([]);
+  /** Owner-only controls (add/remove members) are shown to the owner and to admins. */
+  readonly canManage = computed(() => {
+    const board = this.board();
+    return board !== null && (board.owner === this.auth.username() || this.auth.isAdmin());
+  });
+  /** Bound to the "add a member" input. */
+  newMemberName = '';
   readonly columns = signal<BoardList[]>([]);
   /** Cards keyed by column id. The arrays are mutated in place by the CDK helpers. */
   readonly cardsByList = signal<Record<number, Card[]>>({});
@@ -80,12 +96,47 @@ export class BoardDetailComponent implements OnInit {
       next: board => this.board.set(board),
       error: err => this.fail('Could not load the board', err)
     });
+    this.loadMembers();
     this.boardService.getLists(this.boardId).subscribe({
       next: columns => {
         this.columns.set(columns);
         this.loadCards(columns);
       },
       error: err => this.fail('Could not load the columns', err)
+    });
+  }
+
+  loadMembers(): void {
+    this.boardService.getMembers(this.boardId).subscribe({
+      next: members => this.members.set(members),
+      error: err => this.fail('Could not load the members', err)
+    });
+  }
+
+  addMember(): void {
+    const username = this.newMemberName.trim();
+    if (!username) {
+      return;
+    }
+    this.error.set(null);
+    this.boardService.addMember(this.boardId, username).subscribe({
+      next: member => {
+        this.members.update(members =>
+          [...members, member].sort((a, b) => a.username.localeCompare(b.username)));
+        this.newMemberName = '';
+      },
+      error: err => this.fail(`Could not add "${username}"`, err)
+    });
+  }
+
+  removeMember(member: BoardMember): void {
+    if (!confirm(`Stop sharing this board with ${member.username}?`)) {
+      return;
+    }
+    this.error.set(null);
+    this.boardService.removeMember(this.boardId, member.username).subscribe({
+      next: () => this.members.update(members => members.filter(m => m.username !== member.username)),
+      error: err => this.fail(`Could not remove "${member.username}"`, err)
     });
   }
 
@@ -260,9 +311,11 @@ export class BoardDetailComponent implements OnInit {
     this.cardsByList.set({ ...this.cardsByList() });
   }
 
+  /** Shows `message`, followed by the backend's own reason when it sent one (400/403). */
   private fail(message: string, err: unknown): void {
     console.error(message, err);
-    this.error.set(message);
+    const reason = apiReason(err);
+    this.error.set(reason ? `${message}: ${reason}` : message);
     this.loading.set(false);
   }
 }
