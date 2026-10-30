@@ -26,13 +26,18 @@
             <a class="board-name" [routerLink]="['/boards', board.id]">
               {{ board.name }}
             </a>
+            @if (!isMine(board)) {
+              <span class="badge" title="Owned by {{ board.owner }}">Shared with you</span>
+            }
             <span class="meta">
               {{ board.owner }}
               @if (board.createdAt) {
                 · {{ board.createdAt | date: 'short' }}
               }
             </span>
-            <button class="danger" type="button" (click)="deleteBoard(board)">Delete</button>
+            @if (canManage(board)) {
+              <button class="danger" type="button" (click)="deleteBoard(board)">Delete</button>
+            }
           </div>
         </li>
       }

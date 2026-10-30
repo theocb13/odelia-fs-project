@@ -3,6 +3,40 @@
 
   @if (board(); as b) {
     <h2>{{ b.name }}</h2>
+
+    <aside class="members" aria-label="Board members">
+      <span class="members-label">Owner</span>
+      <span class="chip owner">{{ b.owner }}</span>
+
+      <span class="members-label">Members</span>
+      @for (member of members(); track member.username) {
+        <span class="chip">
+          {{ member.username }}
+          @if (canManage()) {
+            <button
+              type="button"
+              class="chip-remove"
+              [attr.aria-label]="'Remove ' + member.username"
+              (click)="removeMember(member)">×</button>
+          }
+        </span>
+      } @empty {
+        <span class="muted">Not shared yet</span>
+      }
+
+      @if (canManage()) {
+        <form class="add-member" (ngSubmit)="addMember()">
+          <input
+            name="newMemberName"
+            [(ngModel)]="newMemberName"
+            placeholder="Username to share with"
+            autocomplete="off"
+            maxlength="120"
+            aria-label="Username to share with" />
+          <button type="submit" [disabled]="!newMemberName.trim()">Add member</button>
+        </form>
+      }
+    </aside>
   }
 
   @if (error()) {
